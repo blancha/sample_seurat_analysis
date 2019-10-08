@@ -1,0 +1,265 @@
+---
+title: "Generate Seurat object with selected number of principal components, and resolution 1.0"
+author: "Alexis Blanchet-Cohen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+```{r knitroptions, include = FALSE}
+knitr::opts_chunk$set(message = FALSE,
+                      warning = FALSE,
+                      error = FALSE,
+                      cache = TRUE,
+                      cache.lazy=FALSE,
+                      cache.path = paste0("cache", "/", "6-generate_seurat_object_with_selected_pcs_and_resolution_1.0", "/"),
+                      fig.keep = "all",
+                      dev = c("png", "pdf"),
+                      fig.path = paste0("figures", "/", "6-generate_seurat_object_with_selected_pcs_and_resolution_1.0", "/"))
+```
+
+# Setup
+```{r libraries}
+library(data.table)
+library(ggedit)
+library(kableExtra)
+library(knitr)
+library(Matrix)
+library(Seurat)
+library(tidyverse)
+```
+
+```{r setup}
+resolution <- 1.0
+sample_name <- basename(dirname(dirname(getwd())))
+
+tables_directory <- file.path("tables", paste0("resolution_", resolution))
+dir.create(tables_directory, showWarnings = FALSE)
+seurat_objects_directory <- file.path("seurat_objects")
+```
+
+# Load the Seurat object.
+```{r load_seurat_object}
+load(file.path(seurat_objects_directory, "seurat_object_after_principal_components_analysis.Rda"))
+```
+
+# Read the annotation file.
+```{r read_annotation_file}
+input_directory <- "../../../../annotation/hg19"
+input_file <- "gene_annotation.txt"
+annotation <- fread(file.path(input_directory, input_file), data.table=FALSE)
+```
+
+# 20 principal components
+```{r find_clusters_20_principal_components}
+principal_components <- 20
+seurat_20_principal_components <- seurat
+seurat_20_principal_components <- FindClusters(seurat_20_principal_components, reduction.type = "pca", dims.use = 1:principal_components, resolution = as.numeric(resolution), print.output = FALSE, save.SNN = TRUE)
+```
+
+## tSNE plot
+```{r tsne_plot_20_principal_components}
+# tSNE plot is different when do.fast is set to false.
+seurat_20_principal_components <- RunTSNE(seurat_20_principal_components, dims.use = 1:principal_components, do.fast = TRUE)
+
+# Plot tSNE
+p <- TSNEPlot(seurat_20_principal_components, do.return=TRUE)
+show(p)
+```
+
+## Violin plots
+```{r violin_plots_20_principal_components}
+# Generate quality control plots on clusters.
+p <- VlnPlot(seurat_20_principal_components, "nGene", do.return=TRUE)
+show(p)
+p <- p %>% remove_geom("point")
+show(p)
+                                       
+p <- VlnPlot(seurat_20_principal_components, "nUMI", do.return=TRUE)
+show(p)
+p <- p %>% remove_geom("point")
+show(p)
+                
+p <- VlnPlot(seurat_20_principal_components, "percent_mito", do.return=TRUE)
+show(p)
+p <- p %>% remove_geom("point")
+show(p)
+```
+
+## Cluster markers       
+```{r cluster_markers_20_principal_components}  
+# Write to file the cluster to which each cell belongs
+dir.create(file.path(tables_directory, "tsne", "cluster_markers"), recursive=TRUE, showWarnings=FALSE)
+cell_cluster <- seurat@ident
+cell_cluster <- as.data.frame(cell_cluster)
+colnames(cell_cluster) <- "cluster"
+cell_cluster <- rownames_to_column(cell_cluster, "cell")
+cell_cluster <- dplyr::arrange(cell_cluster, cluster)
+write.table(x=cell_cluster, file=file.path(tables_directory, "tsne", paste0("cell_cluster_pc_", principal_components, ".txt")), sep="\t", quote=FALSE, row.names=FALSE)
+
+# Find markers for every cluster compared to all remaining cells, report only the positive ones
+data_markers <- FindAllMarkers(seurat_20_principal_components, only.pos = TRUE, min.pct = 0.25, thresh.use = 0.25)
+data_markers <- dplyr::rename(data_markers, external_gene_id=gene)
+data_markers_with_annotation <- left_join(data_markers, annotation)
+data_markers_with_annotation <- dplyr::arrange(data_markers_with_annotation, cluster, p_val)
+write.table(x=data_markers, file=file.path(tables_directory, "tsne", "cluster_markers", paste0("all_clusters_markers_pc_", principal_components, ".txt")), sep="\t", quote=FALSE, row.names=FALSE)
+write.table(x=data_markers_with_annotation, file=file.path(tables_directory, "tsne", "cluster_markers", paste0("all_clusters_markers_with_annotation_pc_", principal_components, ".txt")), sep="\t", quote=FALSE, row.names=FALSE)
+kable(data_markers_with_annotation, caption="Cluster markers") %>% kable_styling() %>% scroll_box(width = "800px", height = "400px")
+```
+
+## Heatmap of top 10 gene markers per cluster
+```{r heatmap_20_principal_components, fig.width=17, fig.height=17}
+data_markers %>% group_by(cluster) %>% top_n(10, avg_logFC) -> top10
+p <- DoHeatmap(seurat_20_principal_components, genes.use = top10$external_gene_id, slim.col.label = TRUE, remove.key = FALSE, do.plot=FALSE)
+show(p)
+```
+
+## Save Seurat object
+```{r save_seurat_object_20_principal_components, cache=FALSE}
+# Save Seurat object.
+file_name <- file.path(seurat_objects_directory, paste0(sample_name, "_seurat_object_pc_", principal_components, "_resolution_", resolution, ".Rda"))
+assign(sample_name, seurat_20_principal_components)
+do.call(save, list(sample_name, file=file_name))
+```
+
+# 30 principal components
+```{r find_clusters_30_principal_components}
+principal_components <- 30
+seurat_30_principal_components <- seurat
+seurat_30_principal_components <- FindClusters(seurat_30_principal_components, reduction.type = "pca", dims.use = 1:principal_components, resolution = as.numeric(resolution), print.output = FALSE, save.SNN = TRUE)
+```
+
+## tSNE plot
+```{r tsne_plot_30_principal_components}
+# tSNE plot is different when do.fast is set to false.
+seurat_30_principal_components <- RunTSNE(seurat_30_principal_components, dims.use = 1:principal_components, do.fast = TRUE)
+
+# Plot tSNE
+p <- TSNEPlot(seurat_30_principal_components, do.return=TRUE)
+show(p)
+```
+
+## Violin plots
+```{r violin_plots_30_principal_components}
+# Generate quality control plots on clusters.
+p <- VlnPlot(seurat_30_principal_components, "nGene", do.return=TRUE)
+show(p)
+p <- p %>% remove_geom("point")
+show(p)
+                                       
+p <- VlnPlot(seurat_30_principal_components, "nUMI", do.return=TRUE)
+show(p)
+p <- p %>% remove_geom("point")
+show(p)
+                
+p <- VlnPlot(seurat_30_principal_components, "percent_mito", do.return=TRUE)
+show(p)
+p <- p %>% remove_geom("point")
+show(p)
+```
+
+## Cluster markers       
+```{r cluster_markers_30_principal_components}  
+# Write to file the cluster to which each cell belongs
+dir.create(file.path(tables_directory, "tsne", "cluster_markers"), recursive=TRUE, showWarnings=FALSE)
+cell_cluster <- seurat@ident
+cell_cluster <- as.data.frame(cell_cluster)
+colnames(cell_cluster) <- "cluster"
+cell_cluster <- rownames_to_column(cell_cluster, "cell")
+cell_cluster <- dplyr::arrange(cell_cluster, cluster)
+write.table(x=cell_cluster, file=file.path(tables_directory, "tsne", paste0("cell_cluster_pc_", principal_components, ".txt")), sep="\t", quote=FALSE, row.names=FALSE)
+
+# Find markers for every cluster compared to all remaining cells, report only the positive ones
+data_markers <- FindAllMarkers(seurat_30_principal_components, only.pos = TRUE, min.pct = 0.25, thresh.use = 0.25)
+data_markers <- dplyr::rename(data_markers, external_gene_id=gene)
+data_markers_with_annotation <- left_join(data_markers, annotation)
+data_markers_with_annotation <- dplyr::arrange(data_markers_with_annotation, cluster, p_val)
+write.table(x=data_markers, file=file.path(tables_directory, "tsne", "cluster_markers", paste0("all_clusters_markers_pc_", principal_components, ".txt")), sep="\t", quote=FALSE, row.names=FALSE)
+write.table(x=data_markers_with_annotation, file=file.path(tables_directory, "tsne", "cluster_markers", paste0("all_clusters_markers_with_annotation_pc_", principal_components, ".txt")), sep="\t", quote=FALSE, row.names=FALSE)
+kable(data_markers_with_annotation, caption="Cluster markers") %>% kable_styling() %>% scroll_box(width = "800px", height = "400px")
+```
+
+## Heatmap of top 10 gene markers per cluster
+```{r heatmap_30_principal_components, fig.width=17, fig.height=17}
+data_markers %>% group_by(cluster) %>% top_n(10, avg_logFC) -> top10
+p <- DoHeatmap(seurat_30_principal_components, genes.use = top10$external_gene_id, slim.col.label = TRUE, remove.key = FALSE, do.plot=FALSE)
+show(p)
+```
+
+## Save Seurat object
+```{r save_seurat_object_30_principal_components, cache=FALSE}
+# Save Seurat object.
+file_name <- file.path(seurat_objects_directory, paste0(sample_name, "_seurat_object_pc_", principal_components, "_resolution_", resolution, ".Rda"))
+assign(sample_name, seurat_30_principal_components)
+do.call(save, list(sample_name, file=file_name))
+```
+
+## Cell cycle plots
+```{r read_cell_cycle_genes}
+# Read cell cycle gene list
+input_directory <- "../../../../cell_cycle"
+input_file <- "CellCycleGeneList_1134_whitfield_2002.txt"
+cell_cycle_genes <- fread(file.path(input_directory, "CellCycleGeneList_1134_whitfield_2002.txt"))
+cell_cycle_genes$PHASE <- gsub("*", "", cell_cycle_genes$PHASE, fixed=TRUE)
+cell_cycle_genes <- arrange(cell_cycle_genes, PHASE)
+cell_cycle_genes$gene.symbol <- sapply(strsplit(cell_cycle_genes$NAME, split=" ", fixed= TRUE), "[", 1)
+
+g1_s_genes <- filter(cell_cycle_genes, PHASE=="G1/S") %>% .$gene.symbol
+g2_genes <- filter(cell_cycle_genes, PHASE=="G2") %>% .$gene.symbol
+g2_m_genes <- filter(cell_cycle_genes, PHASE=="G2/M") %>% .$gene.symbol
+m_g1_genes <- filter(cell_cycle_genes, PHASE=="M/G1") %>% .$gene.symbol
+s_genes <- filter(cell_cycle_genes, PHASE=="S phase") %>% .$gene.symbol
+```
+
+```{r compute_cell_cycle_scores}
+# Compute cell cycle scores
+expression_data <- as.data.frame(as.matrix(seurat_30_principal_components@data))
+
+expression_data_g1_s_genes <- filter(expression_data, rownames(expression_data) %in% g1_s_genes)
+expression_data_g2_genes <- filter(expression_data, rownames(expression_data) %in% g2_genes)
+expression_data_g2_m_genes <- filter(expression_data, rownames(expression_data) %in% g2_m_genes)
+expression_data_m_g1_genes <- filter(expression_data, rownames(expression_data) %in% m_g1_genes)
+expression_data_s_genes <- filter(expression_data, rownames(expression_data) %in% s_genes)
+
+expression_data_g1_s_scores <- colMeans(expression_data_g1_s_genes)
+expression_data_g2_scores <- colMeans(expression_data_g2_genes)
+expression_data_g2_m_scores <- colMeans(expression_data_g2_m_genes)
+expression_data_m_g1_scores <- colMeans(expression_data_m_g1_genes)
+expression_data_s_scores <- colMeans(expression_data_s_genes)
+
+cell_cycle_scores <- as.data.frame(rbind(expression_data_g1_s_scores, 
+                           expression_data_g2_scores, 
+                           expression_data_g2_m_scores,
+                           expression_data_m_g1_scores,
+                           expression_data_s_scores))
+
+rownames(cell_cycle_scores) <- gsub("expression_data.", "", rownames(cell_cycle_scores))
+
+cell_cycle_scores_tidy <- as.data.frame(t(cell_cycle_scores))
+cell_cycle_scores_tidy <- rownames_to_column(cell_cycle_scores_tidy, "cell") 
+cell_cycle_scores_tidy <- add_column(cell_cycle_scores_tidy, cluster=seurat_30_principal_components@ident, .after="cell")
+```
+
+```{r cell_cycle_trajectory_plot}
+# Cell cycle trajectory plots
+p <- ggplot(cell_cycle_scores_tidy, aes(x=g1_s_scores, y=g2_m_scores)) + 
+  geom_point(aes(color=cluster)) + xlab("G1/S score") + ylab("G2/M score")
+show(p)
+```
+
+```{r cell_cycle_trajectory_plot_with_facets, fig.width=35}
+p <- ggplot(cell_cycle_scores_tidy, aes(x=g1_s_scores, y=g2_m_scores)) + 
+  geom_point(aes(color=cluster)) + xlab("G1/S score") + ylab("G2/M score") + facet_grid(~cluster)
+show(p)
+```
+
+
+# Session info
+```{r session_info}
+sessionInfo()
+```

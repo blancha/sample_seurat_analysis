@@ -1,0 +1,127 @@
+---
+title: "Quality controls after filtering"
+author: "Alexis Blanchet-Cohen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+```{r knitroptions, include = FALSE}
+knitr::opts_chunk$set(message = FALSE,
+                      warning = FALSE,
+                      error = FALSE,
+                      cache = TRUE,
+                      cache.path = paste0("cache", "/", "2-quality_controls_after_filtering", "/"),
+                      fig.keep = "all",
+                      dev = c("png", "pdf"),
+                      fig.path = paste0("figures", "/", "2-quality_controls_after_filtering", "/"))
+```
+
+# Setup
+```{r libraries}
+library(data.table)
+library(kableExtra)
+library(knitr)
+library(Matrix)
+library(Seurat)
+library(tidyverse)
+```
+
+```{r setup}
+sample_name <- basename(dirname(dirname(getwd())))
+input_directory <- "../../results/cellranger_count"
+tables_directory <- "tables"
+seurat_objects_directory <- "seurat_objects"
+dir.create(seurat_objects_directory, showWarnings = FALSE)
+
+min_mito <- -Inf
+max_mito <- 20
+min_ngene <- 200
+max_ngene <- 4000
+min_numi <- -Inf
+max_numi <- 20000
+```
+
+# Create the Seurat object.
+```{r read_10x_dataset}
+tenx_sparse_matrix <- Read10X(file.path(input_directory, "filtered_gene_bc_matrices", "hg19"))
+```
+
+```{r create_Seurat_object, cache=TRUE}
+seurat <- CreateSeuratObject(raw.data = tenx_sparse_matrix, min.cells = 3, min.genes = 200, project = sample_name)
+```
+
+# Compute the mitochondrial proportions.
+```{r compute_mitochondrial_proportions}
+mito_genes <- grep("^MT-", rownames(seurat@data), value = TRUE)
+percent_mito <- Matrix::colSums(seurat@data[mito_genes, ])/Matrix::colSums(seurat@data) * 100
+seurat <- AddMetaData(seurat, percent_mito, "percent_mito")
+```
+
+# Filter cells, that do not meet thresholds.
+```{r filter_cells}
+total_number_cells <- nrow(seurat@meta.data)
+
+filtered_cells <- filter(seurat@meta.data, nGene < min_ngene | nGene > max_ngene | nUMI < min_numi | nUMI > max_numi | percent_mito < min_mito | percent_mito > max_mito)
+seurat <- FilterCells(seurat, subset.names = c("nGene", "nUMI", "percent_mito"), low.thresholds=c(min_ngene, min_numi, min_mito), high.thresholds=c(max_ngene, max_numi, max_mito))
+
+write.table(filtered_cells, file.path(tables_directory, "filtered_cells.txt"), sep="\t", quote=FALSE, row.names=FALSE)
+print(paste0("Total number of cells: ", total_number_cells))
+print(paste0("Number of filtered cells: ", length(filtered_cells)))
+if(nrow(filtered_cells)>0) { 
+  print(paste0("% filtered cells: ", paste0(nrow(filtered_cells)/total_number_cells*100)))
+  kable(filtered_cells, caption="Filtered cells") %>% kable_styling() %>% scroll_box(width = "100%", height = "200px")
+}
+```
+
+# Quality control plots after filtering.
+```{r quality_control_plots, fig.width=12, fig.height=12}
+VlnPlot(seurat, c("nGene", "nUMI", "percent_mito"), nCol = 3)
+
+GenePlot(seurat, "nUMI", "percent_mito")
+GenePlot(seurat, "nUMI", "nGene")
+
+# Write statistics on number of genes and number of UMIs.
+metadata <- seurat@meta.data
+gene_mean <- round(mean(metadata$nGene), digits=2)
+gene_sd <- round(sd(metadata$nGene), digits=2)
+gene_max <- max(metadata$nGene)
+gene_min <- min(metadata$nGene)
+gene_info <- as.data.frame(cbind(gene_mean, gene_sd, gene_max, gene_min))
+write.table(x=gene_info, file=file.path(tables_directory, "gene_statistics_after_filtering.txt"), sep="\t",
+      quote=FALSE, row.names=FALSE, col.names=TRUE)
+kable(gene_info, caption="Gene statistics after filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "100%")
+
+umi_mean <- round(mean(metadata$nUMI), digits=2)
+umi_sd <- round(sd(metadata$nUMI), digits=2)
+umi_max <- max(metadata$nUMI)
+umi_min <- min(metadata$nUMI)
+umi_info <- as.data.frame(cbind(umi_mean, umi_sd, umi_max, umi_min))
+write.table(x=umi_info, file=file.path(tables_directory, "umi_statistics_after_filtering.txt"), sep="\t",
+            quote=FALSE, row.names=FALSE, col.names=TRUE)
+kable(umi_info, caption="UMI statistics after filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "100%")
+
+percent_mito_mean <- round(mean(metadata$percent_mito), digits=2)
+percent_mito_sd <- round(sd(metadata$percent_mito), digits=2)
+percent_mito_max <- max(metadata$percent_mito)
+percent_mito_min <- min(metadata$percent_mito)
+percent_mito_info <- as.data.frame(cbind(percent_mito_mean, percent_mito_sd, percent_mito_max, percent_mito_min))
+write.table(x=percent_mito_info, file=file.path(tables_directory, "fraction_mito_statistics_after_filtering.txt"), sep="\t",
+            quote=FALSE, row.names=FALSE, col.names=TRUE)
+kable(umi_info, caption="Mitochondrial statistics after filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "100%")
+```
+
+```{r save_seurat_object}
+save(seurat, file=file.path(seurat_objects_directory, "seurat_object_after_filtering.Rda"))
+```
+
+# Session info
+```{r session_info}
+sessionInfo()
+```
+

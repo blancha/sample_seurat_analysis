@@ -1,0 +1,124 @@
+---
+title: "Computation of principal components"
+author: "Alexis Blanchet-Cohen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+```{r knitroptions, include = FALSE}
+knitr::opts_chunk$set(message = FALSE,
+                      warning = FALSE,
+                      error = FALSE,
+                      cache = TRUE,
+                      cache.path = paste0("cache", "/", "3-principal_components", "/"),
+                      fig.keep = "all",
+                      dev = c("png", "pdf"),
+                      fig.path = paste0("figures", "/", "3-principal_components", "/"))
+```
+
+# Setup
+```{r libraries}
+library(data.table)
+library(kableExtra)
+library(knitr)
+library(Matrix)
+library(Seurat)
+library(tidyverse)
+```
+
+```{r setup}
+sample_name <- basename(dirname(dirname(getwd())))
+tables_directory <- "tables"
+seurat_objects_directory <- "seurat_objects"
+
+number_principal_components_vector <- c(10, 20, 30, 50, 100)
+```
+
+# Load the Seurat object.
+```{r load_seurat_object}
+load(file.path(seurat_objects_directory, "seurat_object_after_filtering.Rda"))
+```
+
+# Normalise data, and regress out number UMIs and mitochondrial percentage.
+```{r normalize_data}
+seurat <- NormalizeData(object = seurat, normalization.method="LogNormalize", scale.factor=10000)
+seurat <- FindVariableGenes(object = seurat, mean.function = ExpMean, dispersion.function = LogVMR, 
+    x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
+seurat <- ScaleData(object = seurat, vars.to.regress = c("nUMI", "percent_mito"))
+```
+
+# Principal component analysis
+```{r principal_component_analysis}
+length_var_genes <- length(seurat@var.genes)
+print(paste0("Number of variable genes: ", length_var_genes))
+writeLines(paste0("Number of variable genes: ", length_var_genes), file.path(tables_directory, "number_of_variable_genes.txt"))
+
+# Principal component analysis. 
+# Takes a long time.
+seurat <- RunPCA(seurat, pc.genes = seurat@var.genes, pcs.compute=100, do.print=FALSE)
+
+# Takes a pre-computed PCA (typically calculated on a subset of genes) and projects this onto the entire dataset (all genes).
+# Note that the cell loadings (PCA rotation matrices) remains unchanged, but now there are gene scores for all genes.
+seurat <- ProjectPCA(seurat, do.print=FALSE)
+
+# Write principal components to file.
+principal_components <- as.data.frame(seurat@dr$pca@gene.loadings)
+principal_components <- rownames_to_column(principal_components, "external_gene_id")
+principal_components <- dplyr::arrange(principal_components, desc(PC1))
+write.table(principal_components, file.path(tables_directory, "principal_components_variable_genes.txt")
+            ,sep="\t", quote=FALSE, row.names=FALSE)
+kable(principal_components, caption="Principal components") %>% kable_styling() %>% scroll_box(width = "100%", height = "200px")
+```
+
+```{r principal_components_plots}
+VizPCA(seurat, 1:2)
+
+PCAPlot(seurat, 1, 2)
+
+# Principal components heatmaps
+# Just top cells and genes.
+PCHeatmap(seurat, pc.use = 1, cells.use = 100, do.balanced = TRUE, label.columns=FALSE, main="PC: 1")
+```
+
+```{r heatmap_pc2, fig.width=12, fig.height=10}
+# Just top cells and genes.
+PCHeatmap(seurat, pc.use = 2, cells.use = 100, do.balanced = TRUE, label.columns=FALSE, main="PC: 2")
+```
+
+```{r heatmap_pc_1_12, fig.width=24, fig.height=24}
+PCHeatmap(seurat, pc.use = 1:12, cells.use = 500, do.balanced = TRUE, label.columns = FALSE, use.full = FALSE)
+```
+
+```{r elbow_plots, fig.width=8, fig.height=8}
+log <- lapply(number_principal_components_vector, function(number_principal_components) {
+   p <- PCElbowPlot(seurat, num.pc=number_principal_components) + ggtitle(paste0("Number of principal components: ", number_principal_components))
+   show(p)
+})
+```
+
+# Compute proportions of variances
+```{r compute_proportion_variances}
+sdev <- seurat@dr$pca@sdev
+variance <- sdev^2
+sum_variance <- sum(variance)
+proportion_variance <- variance/sum_variance * 100
+proportion_variance <- data.frame(pc=1:length(proportion_variance), proportion_variance=proportion_variance)
+write.table(proportion_variance, file.path(tables_directory, "principal_components_proportion_variance.txt"), sep="\t", quote=FALSE, row.names=FALSE, col.names=FALSE)
+kable(proportion_variance, caption="Proportion of variance") %>% kable_styling() %>% scroll_box(width = "100%", height = "200px")
+```
+
+```{r save_seurat_object}
+save(seurat, file=file.path(seurat_objects_directory, "seurat_object_after_principal_components_analysis.Rda"))
+```
+
+# Session info
+```{r session_info}
+sessionInfo()
+```
+

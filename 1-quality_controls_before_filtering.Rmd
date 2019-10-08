@@ -1,0 +1,173 @@
+---
+title: "Quality controls before filtering"
+author: "Alexis Blanchet-Cohen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+```{r knitroptions, include = FALSE}
+knitr::opts_chunk$set(message = FALSE,
+                      warning = FALSE,
+                      error = FALSE,
+                      cache = TRUE,
+                      cache.path = paste0("cache", "/", "1-quality_controls_before_filtering", "/"),
+                      fig.keep = "all",
+                      dev = c("png", "pdf"),
+                      fig.path = paste0("figures", "/", "1-quality_controls_before_filtering", "/"))
+```
+
+# Setup
+```{r libraries}
+library(data.table)
+library(kableExtra)
+library(knitr)
+library(Matrix)
+library(Seurat)
+library(tidyverse)
+```
+
+```{r setup}
+sample_name <- basename(dirname(dirname(getwd())))
+input_directory <- "../../results/cellranger_count"
+output_directory <- "tables"
+dir.create(output_directory, showWarnings = FALSE)
+```
+
+# Read the 10X matrix.
+```{r read_10x_dataset}
+tenx_sparse_matrix <- Read10X(file.path(input_directory, "filtered_gene_bc_matrices", "hg19"))
+```
+
+# Create the seurat object with the usual minimum thresholds of genes expressed in at least 3 cells and 200 genes per cell.
+```{r create_Seurat_object, cache=TRUE}
+seurat <- CreateSeuratObject(raw.data = tenx_sparse_matrix, min.cells = 3, min.genes = 200, project = sample_name)
+```
+
+## Compute the mitochondrial proportions.
+```{r compute_mitochondrial_proportions}
+mito_genes <- grep("^MT-", rownames(seurat@data), value = TRUE)
+percent_mito <- Matrix::colSums(seurat@data[mito_genes, ])/Matrix::colSums(seurat@data) * 100
+seurat <- AddMetaData(seurat, percent_mito, "percent_mito")
+```
+
+## Quality controls.
+```{r quality_controls, fig.width=12, fig.height=8}
+percent_mito <- data.frame(cell=seurat@cell.names, percent_mito)
+percent_mito <- dplyr::arrange(percent_mito, desc(percent_mito))
+percent_mito$cell <- factor(percent_mito$cell, levels=percent_mito$cell)
+write.table(percent_mito, file.path(output_directory, "percentage_mito_each_cell_before_filtering.txt"), sep="\t", quote=FALSE, row.names=FALSE)
+kable(percent_mito, caption="Percentage mito in each cell without filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "200px")
+
+mean_percent_mito <- round(mean(percent_mito$percent_mito), digits=2)
+p <-  ggplot(percent_mito, aes(x=cell, y=percent_mito)) + geom_histogram(stat="identity") +
+        scale_y_continuous(expand = c(0, 0)) +
+        geom_hline(aes(yintercept=mean_percent_mito), color="blue", linetype="dashed", size=1) +
+        annotate("text",label = paste0("Mean: ", mean_percent_mito, "%"), x=0, y=mean_percent_mito, hjust=-1, vjust=-1) +
+        xlab ("Cell") + ylab("Mitochondrial %") +
+        theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+        ggtitle("Mitochondrial proportions")
+show(p)
+
+p <- VlnPlot(seurat, c("nGene", "nUMI", "percent_mito"), nCol = 3)
+show(p)
+
+GenePlot(seurat, "nUMI", "percent_mito")
+GenePlot(seurat, "nUMI", "nGene")
+
+# Compute statistics on number of genes and number of UMIs.
+metadata <- seurat@meta.data
+gene_mean <- round(mean(metadata$nGene), digits=2)
+gene_sd <- round(sd(metadata$nGene), digits=2)
+gene_max <- max(metadata$nGene)
+gene_min <- min(metadata$nGene)
+gene_info <- as.data.frame(cbind(gene_mean, gene_sd, gene_max, gene_min))
+write.table(gene_info, file.path(output_directory, "gene_statistics_before_filtering.txt"), sep="\t", quote=FALSE, row.names=FALSE)
+kable(gene_info, caption="Gene statistics before filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "100%")
+
+umi_mean <- round(mean(metadata$nUMI), digits=2)
+umi_sd <- round(sd(metadata$nUMI), digits=2)
+umi_max <- max(metadata$nUMI)
+umi_min <- min(metadata$nUMI)
+umi_info <- as.data.frame(cbind(umi_mean, umi_sd, umi_max, umi_min))
+write.table(umi_info, file.path(output_directory, "umi_statistics_before_filtering.txt"), sep="\t", quote=FALSE, row.names=FALSE)
+kable(umi_info, caption="UMI statistics before filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "100%")
+
+percent_mito_mean <- round(mean(metadata$percent_mito), digits=2)
+percent_mito_sd <- round(sd(metadata$percent_mito), digits=2)
+percent_mito_max <- max(metadata$percent_mito)
+percent_mito_min <- min(metadata$percent_mito)
+percent_mito_info <- as.data.frame(cbind(percent_mito_mean, percent_mito_sd, percent_mito_max, percent_mito_min))
+write.table(percent_mito_info, file.path(output_directory, "mitochondrial_statistics_before_filtering.txt"), sep="\t", quote=FALSE, row.names=FALSE)
+kable(percent_mito_info, caption="Mitochondrial statistics before filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "100%")
+```
+
+# Create the seurat object with no minimum thresholds
+```{r create_Seurat_object_no_minimum, cache=TRUE}
+seurat <- CreateSeuratObject(raw.data = tenx_sparse_matrix, project = sample_name)
+```
+
+## Compute the mitochondrial proportions.
+```{r compute_mitochondrial_proportions_no_minimum}
+mito_genes <- grep("^MT-", rownames(seurat@data), value = TRUE)
+percent_mito <- Matrix::colSums(seurat@data[mito_genes, ])/Matrix::colSums(seurat@data) * 100
+seurat <- AddMetaData(seurat, percent_mito, "percent_mito")
+```
+
+## Quality controls.
+```{r quality_controls_no_minimum, fig.width=12, fig.height=8}
+percent_mito <- data.frame(cell=seurat@cell.names, percent_mito)
+percent_mito <- dplyr::arrange(percent_mito, desc(percent_mito))
+percent_mito$cell <- factor(percent_mito$cell, levels=percent_mito$cell)
+kable(percent_mito, caption="Percentage mito in each cell without filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "200px")
+
+mean_percent_mito <- round(mean(percent_mito$percent_mito), digits=2)
+p <-  ggplot(percent_mito, aes(x=cell, y=percent_mito)) + geom_histogram(stat="identity") +
+        scale_y_continuous(expand = c(0, 0)) +
+        geom_hline(aes(yintercept=mean_percent_mito), color="blue", linetype="dashed", size=1) +
+        annotate("text",label = paste0("Mean: ", mean_percent_mito, "%"), x=0, y=mean_percent_mito, hjust=-1, vjust=-1) +
+        xlab ("Cell") + ylab("Mitochondrial %") +
+        theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+        ggtitle("Mitochondrial proportions")
+show(p)
+
+p <- VlnPlot(seurat, c("nGene", "nUMI", "percent_mito"), nCol = 3)
+show(p)
+
+GenePlot(seurat, "nUMI", "percent_mito")
+GenePlot(seurat, "nUMI", "nGene")
+
+# Compute statistics on number of genes and number of UMIs.
+metadata <- seurat@meta.data
+gene_mean <- round(mean(metadata$nGene), digits=2)
+gene_sd <- round(sd(metadata$nGene), digits=2)
+gene_max <- max(metadata$nGene)
+gene_min <- min(metadata$nGene)
+gene_info <- as.data.frame(cbind(gene_mean, gene_sd, gene_max, gene_min))
+kable(gene_info, caption="Gene statistics before filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "100%")
+
+umi_mean <- round(mean(metadata$nUMI), digits=2)
+umi_sd <- round(sd(metadata$nUMI), digits=2)
+umi_max <- max(metadata$nUMI)
+umi_min <- min(metadata$nUMI)
+umi_info <- as.data.frame(cbind(umi_mean, umi_sd, umi_max, umi_min))
+kable(umi_info, caption="UMI statistics before filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "100%")
+
+percent_mito_mean <- round(mean(metadata$percent_mito), digits=2)
+percent_mito_sd <- round(sd(metadata$percent_mito), digits=2)
+percent_mito_max <- max(metadata$percent_mito)
+percent_mito_min <- min(metadata$percent_mito)
+percent_mito_info <- as.data.frame(cbind(percent_mito_mean, percent_mito_sd, percent_mito_max, percent_mito_min))
+kable(percent_mito_info, caption="Mitochondrial statistics before filtering") %>% kable_styling() %>% scroll_box(width = "100%", height = "100%")
+```
+
+# Session info
+```{r session_info}
+sessionInfo()
+```
+
